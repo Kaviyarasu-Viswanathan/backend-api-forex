@@ -1,7 +1,6 @@
 services:
   - type: web
     name: forex-calendar-api
-    rootDirectory: backend-server
     env: python
     region: ohio # Close to US users usually
     plan: free # Use free tier
