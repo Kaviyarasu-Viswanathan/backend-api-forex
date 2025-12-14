@@ -625,6 +625,8 @@ def read_root():
 @app.get("/calendar", response_model=List[CalendarEvent])
 async def get_calendar(
     date: Optional[str] = Query(None, description="Specific date (YYYY-MM-DD)"),
+    date_from: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
     period: Optional[str] = Query("today", description="today, tomorrow, week, month"),
     country: Optional[str] = Query(None, description="Country code filter"),
     sources: Optional[str] = Query("all", description="Comma-separated sources or 'all'")
@@ -634,29 +636,41 @@ async def get_calendar(
     # Calculate date range
     today = datetime.now()
     
+    # Determine effective date range
+    effective_from = None
+    effective_to = None
+
     if date:
         try:
-            date_from = date_to = date
+            effective_from = effective_to = date
             datetime.strptime(date, '%Y-%m-%d')  # Validate format
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    elif date_from and date_to:
+        try:
+            datetime.strptime(date_from, '%Y-%m-%d')
+            datetime.strptime(date_to, '%Y-%m-%d')
+            effective_from = date_from
+            effective_to = date_to
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date_from/date_to format. Use YYYY-MM-DD")
     else:
         if period == "today":
-            date_from = date_to = today.strftime('%Y-%m-%d')
+            effective_from = effective_to = today.strftime('%Y-%m-%d')
         elif period == "tomorrow":
             tomorrow = today + timedelta(days=1)
-            date_from = date_to = tomorrow.strftime('%Y-%m-%d')
+            effective_from = effective_to = tomorrow.strftime('%Y-%m-%d')
         elif period == "week":
-            date_from = today.strftime('%Y-%m-%d')
-            date_to = (today + timedelta(days=7)).strftime('%Y-%m-%d')
+            effective_from = today.strftime('%Y-%m-%d')
+            effective_to = (today + timedelta(days=7)).strftime('%Y-%m-%d')
         elif period == "month":
-            date_from = today.strftime('%Y-%m-%d')
-            date_to = (today + timedelta(days=30)).strftime('%Y-%m-%d')
+            effective_from = today.strftime('%Y-%m-%d')
+            effective_to = (today + timedelta(days=30)).strftime('%Y-%m-%d')
         else:
-            date_from = date_to = today.strftime('%Y-%m-%d')
+            effective_from = effective_to = today.strftime('%Y-%m-%d')
     
     # Check cache - ALWAYS return cached data instantly (never block on scraping)
-    cache_key = f"{date_from}_{date_to}_{country}_{sources}"
+    cache_key = f"{effective_from}_{effective_to}_{country}_{sources}"
     
     # Try exact match first
     if cache_key in CACHE:
@@ -671,7 +685,7 @@ async def get_calendar(
             # Filter events to match requested date range
             filtered = [
                 e for e in cached_data 
-                if date_from <= e.date <= date_to
+                if effective_from <= e.date <= effective_to
             ]
             if filtered:
                 logger.info(f"Serving partial cached data ({len(filtered)} events) for {cache_key}")
@@ -682,10 +696,10 @@ async def get_calendar(
     
     try:
         # Scrape live (blocking)
-        live_data = scrape_trading_economics(date_from, date_to, country)
+        live_data = scrape_trading_economics(effective_from, effective_to, country)
         if not live_data:
              # Fallback to other sources
-             live_data.extend(scrape_investing_com(date_from, date_to, country))
+             live_data.extend(scrape_investing_com(effective_from, effective_to, country))
         
         if live_data:
             # Cache the result
