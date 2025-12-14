@@ -145,11 +145,29 @@ class CalendarEvent(BaseModel):
     description: Optional[str] = None
     event_id: Optional[str] = None # Added for frontend lookup
 
+class NewsStory(BaseModel):
+    id: str
+    title: str
+    content: Optional[str] = None
+    link: str
+    date: str # ISO string
+    source: str = "ForexFactory"
+    impact: str = "Low" # Low, Medium, High (Hot)
+    is_hot: bool = False
+
 # ============= CACHE STORAGE =============
 CACHE: Dict[str, Tuple[float, List[CalendarEvent]]] = {}
 CACHE_TTL = 86400  # 24 hours
 # Use absolute path relative to this file
 CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calendar_cache.json")
+
+# NEWS CACHE
+NEWS_CACHE: Dict[str, List[NewsStory]] = {
+    "latest": [],
+    "hot": []
+}
+NEWS_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news_cache.json")
+NEWS_CACHE_TTL = 300 # 5 minutes
 
 # Track fetch status for frontend
 FETCH_STATUS: Dict[str, str] = {}  # cache_key -> "fetching" | "ready" | "error"
@@ -169,6 +187,19 @@ def save_cache():
         logger.info(f"Saved {len(CACHE)} cache entries to {CACHE_FILE}")
     except Exception as e:
         logger.error(f"Failed to save cache: {e}")
+
+def save_news_cache():
+    """Save news cache to disk"""
+    try:
+        serializable_news = {
+            "latest": [n.dict() for n in NEWS_CACHE["latest"]],
+            "hot": [n.dict() for n in NEWS_CACHE["hot"]]
+        }
+        with open(NEWS_CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(serializable_news, f, ensure_ascii=False, indent=2)
+        logger.info(f"Saved news cache to {NEWS_CACHE_FILE}")
+    except Exception as e:
+        logger.error(f"Failed to save news cache: {e}")
 
 def load_cache():
     """Load cache from disk on startup"""
@@ -194,6 +225,20 @@ def load_cache():
                 
     except Exception as e:
         logger.error(f"Failed to load cache: {e}")
+
+def load_news_cache():
+    """Load news cache from disk"""
+    global NEWS_CACHE
+    try:
+        if os.path.exists(NEWS_CACHE_FILE):
+            with open(NEWS_CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            NEWS_CACHE["latest"] = [NewsStory(**n) for n in data.get("latest", [])]
+            NEWS_CACHE["hot"] = [NewsStory(**n) for n in data.get("hot", [])]
+            logger.info(f"Loaded {len(NEWS_CACHE['latest'])} latest and {len(NEWS_CACHE['hot'])} hot news stories")
+    except Exception as e:
+        logger.error(f"Failed to load news cache: {e}")
 
 def background_prefetch():
     """Prefetch next 30 days of data in background - runs every 5 minutes"""
@@ -237,11 +282,41 @@ def background_prefetch():
 @app.on_event("startup")
 async def startup_event():
     load_cache()
-    # Start background refresh thread (runs every 5 mins)
+    load_news_cache()
+    
+    # Start background calendar data refresh (5 mins)
     thread = Thread(target=background_prefetch)
     thread.daemon = True
     thread.start()
-    logger.info("Background refresh thread started (5-min interval)")
+    
+    # Start background news refresh (5 mins)
+    news_thread = Thread(target=background_news_refresh)
+    news_thread.daemon = True
+    news_thread.start()
+    
+    logger.info("Background refresh threads started")
+
+def background_news_refresh():
+    """Refresh news every 5 minutes"""
+    time.sleep(10) # Initial delay
+    
+    while True:
+        try:
+            logger.info("Refreshing ForexFactory news...")
+            latest, hot = scrape_forexfactory_news()
+            
+            if latest:
+                NEWS_CACHE["latest"] = latest
+            if hot:
+                NEWS_CACHE["hot"] = hot
+                
+            if latest or hot:
+                save_news_cache()
+                
+        except Exception as e:
+            logger.error(f"Background news refresh failed: {e}")
+            
+        time.sleep(300) # 5 minutes
 
 # ============= SCRAPING FUNCTIONS =============
 def fetch_with_retry(url: str, max_retries: int = 3, use_proxy: bool = True) -> Optional[requests.Response]:
@@ -532,6 +607,96 @@ def scrape_fxstreet(date_from: str, date_to: str) -> List[CalendarEvent]:
     
     return events
 
+def scrape_forexfactory_news() -> Tuple[List[NewsStory], List[NewsStory]]:
+    """Scrape Latest and Hot news from ForexFactory"""
+    latest_news = []
+    hot_news = []
+    
+    try:
+        url = "https://www.forexfactory.com/news"
+        logger.info(f"Scraping ForexFactory News: {url}")
+        
+        response = fetch_with_retry(url)
+        if not response:
+            return [], []
+            
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # 1. Scrape Latest News (Main feed)
+        news_items = soup.find_all('li', {'class': 'news__list_item'})
+        
+        for item in news_items:
+            try:
+                story_div = item.find('div', {'class': 'news__story'})
+                if not story_div: continue
+                
+                title_tag = story_div.find('a', {'class': 'news__title'})
+                if not title_tag: continue
+                
+                title = title_tag.get_text(strip=True)
+                link = title_tag.get('href', '')
+                if link and not link.startswith('http'):
+                    link = f"https://www.forexfactory.com{link}"
+                    
+                date_str = datetime.now().isoformat()
+                
+                impact = "Low"
+                if "impact-high" in str(item): impact = "High"
+                elif "impact-medium" in str(item): impact = "Medium"
+                
+                story_id = f"ff-news-{hash(title)}"
+                
+                story = NewsStory(
+                    id=story_id,
+                    title=title,
+                    link=link,
+                    date=date_str,
+                    source="ForexFactory",
+                    impact=impact,
+                    is_hot=False
+                )
+                latest_news.append(story)
+            except Exception as e:
+                continue
+                
+        # 2. Scrape 'Hottest Stories' (Sidebar)
+        sidebars = soup.find_all('div', {'class': 'sidebar__widget'})
+        for widget in sidebars:
+            header = widget.find('h3', {'class': 'sidebar__title'})
+            if header and 'Hottest Stories' in header.get_text():
+                hot_items = widget.find_all('li')
+                for item in hot_items:
+                    try:
+                        link_tag = item.find('a')
+                        if not link_tag: continue
+                        
+                        title = link_tag.get_text(strip=True)
+                        link = link_tag.get('href', '')
+                        if link and not link.startswith('http'):
+                            link = f"https://www.forexfactory.com{link}"
+                        
+                        story_id = f"ff-hot-{hash(title)}"
+                        
+                        story = NewsStory(
+                            id=story_id,
+                            title=title,
+                            link=link,
+                            date=datetime.now().isoformat(),
+                            source="ForexFactory",
+                            impact="High",
+                            is_hot=True
+                        )
+                        hot_news.append(story)
+                    except:
+                        continue
+                        
+        logger.info(f"ForexFactory News: Found {len(latest_news)} latest, {len(hot_news)} hot")
+        
+    except Exception as e:
+        logger.error(f"ForexFactory News Error: {e}")
+        
+    return latest_news, hot_news
+
 def scrape_marketwatch(date_from: str, date_to: str) -> List[CalendarEvent]:
     """Scrape MarketWatch calendar"""
     events = []
@@ -793,6 +958,15 @@ async def navigate_calendar(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/news", response_model=List[NewsStory])
+async def get_news(
+    type: str = Query("latest", description="News type: 'latest' or 'hot'")
+):
+    """Get latest or hot news from ForexFactory"""
+    if type.lower() == "hot":
+        return NEWS_CACHE["hot"]
+    return NEWS_CACHE["latest"]
 
 @app.get("/calendar/sources")
 async def get_sources():
