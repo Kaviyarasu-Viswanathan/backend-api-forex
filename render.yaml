@@ -9,3 +9,15 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.10.0
+
+  - type: web
+    name: forex-tv-service
+    env: node
+    region: ohio
+    plan: free
+    rootDir: tv-service
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 18.17.0
