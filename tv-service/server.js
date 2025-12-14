@@ -117,6 +117,10 @@ app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'tv-service' });
 });
 
+app.get('/', (req, res) => {
+    res.send('TV Service is running. Connect via WebSocket.');
+});
+
 server.listen(PORT, () => {
     console.log(`TV Service running on port ${PORT}`);
 });
