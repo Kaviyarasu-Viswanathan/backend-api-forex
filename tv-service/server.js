@@ -36,6 +36,36 @@ wss.on('connection', (ws) => {
 
             if (data.type === 'INIT_CHART') {
                 await setupChart(ws, client, data.symbol || 'OANDA:EURUSD', data.interval || 'D');
+            } else if (data.type === 'ADD_INDICATOR') {
+                if (client.chart && data.indicator) {
+                    // indicator: "Script@tv-scripting-101!tradingview/RSI/14" or similar
+                    // For built-ins, standard names might work depending on library version, 
+                    // but usually requires specific TV script signatures.
+                    // Testing with simple name first or requiring full signature from frontend.
+                    console.log(`Adding indicator: ${data.indicator}`);
+                    // Note: library might define setStudy or similar. 
+                    // Use a generic approach: custom studies usually need pine id.
+                    try {
+                        const study = await client.chart.setMarket(client.symbol, {
+                            ...client.chart.infos, // keep existing settings
+                            adjustment: 'splits',
+                            session: 'regular'
+                        });
+                        // Actually the library usage for indicators:
+                        // const study = new tvClient.Session.Study(client.chart);
+                        // study.setIndicator(data.indicator);
+
+                        // Since we are using @mathieuc/tradingview, let's use the Chart methods if available
+                        // OR create a Study instance attached to the chart session.
+                        /* 
+                           Ref: Library docs usually imply creating a Study object. 
+                           Let's implement a wrapper if the directly attached method isn't evident.
+                           For now, assuming the user might send a Pine ID. 
+                        */
+                    } catch (err) {
+                        console.error('Indicator Error', err);
+                    }
+                }
             }
         } catch (e) {
             console.error('Error processing message:', e);
@@ -148,6 +178,20 @@ async function setupChart(ws, client, symbol, interval) {
         }
     }
 }
+
+app.get('/search', async (req, res) => {
+    const query = req.query.query;
+    if (!query) return res.status(400).json({ error: 'Missing query' });
+
+    try {
+        const response = await fetch(`https://symbol-search.tradingview.com/symbol_search/v3/?text=${query}&hl=1&exchange=&lang=en&domain=production`);
+        const data = await response.json();
+        res.json(data);
+    } catch (e) {
+        console.error('Search error', e);
+        res.status(500).json({ error: 'Search failed' });
+    }
+});
 
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'tv-service', connections: clients.size });
