@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: forex-calendar-api
+    rootDirectory: backend-server
+    env: python
+    region: ohio # Close to US users usually
+    plan: free # Use free tier
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.0
