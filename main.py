@@ -26,6 +26,11 @@ import logging
 import asyncio
 import os
 from threading import Thread
+import nest_asyncio
+
+# Apply nest_asyncio to allow swiftshadow to call asyncio.run() 
+# while uvicorn's event loop is already running.
+nest_asyncio.apply()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -33,28 +38,15 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Free Forex Economic Calendar API")
 
 # ============= PROXY MANAGEMENT (SwiftShadow) =============
-proxy_manager: Optional[ProxyInterface] = None
+# Thanks to nest_asyncio, we can now initialize this normally.
+# It will still call asyncio.run() internally, which will now work.
+try:
+    proxy_manager = ProxyInterface(protocol="http", autoRotate=True)
+except Exception as e:
+    logger.error(f"Failed to initialize ProxyInterface: {e}")
+    proxy_manager = None
 
 def get_proxy_manager():
-    global proxy_manager
-    if proxy_manager is None:
-        try:
-            # Try to initialize. If it fails due to event loop, we'll try another way
-            proxy_manager = ProxyInterface(protocol="http", autoRotate=True)
-        except RuntimeError as e:
-            if "asyncio.run() cannot be called from a running event loop" in str(e):
-                # If we are already in a loop (like uvicorn), ProxyInterface(autoRotate=True) 
-                # might fail because its __init__ calls self.update() which calls asyncio.run().
-                # We can try to initialize without autoRotate first, then start rotation manually or 
-                # just initialize it if we can find a way to avoid the immediate update.
-                logger.info("Event loop already running, initializing ProxyInterface differently...")
-                # Note: Newer versions of swiftshadow might have an async way to update.
-                # For now, let's try to bypass the immediate update if possible or 
-                # initialize without autoRotate if that avoids the asyncio.run() call.
-                proxy_manager = ProxyInterface(protocol="http", autoRotate=False)
-                # We will need to trigger an update later
-            else:
-                raise e
     return proxy_manager
 
 # ============= DATA MODELS =============
@@ -121,19 +113,7 @@ def debug_calendar(date_from: str = "2025-12-15", date_to: str = "2025-12-21"):
 
 @app.on_event("startup")
 async def startup_event():
-    # Initialize proxy manager on startup
-    manager = get_proxy_manager()
-    if manager:
-        try:
-            # If it was initialized without update (autoRotate=False fallback), update it now
-            # Note: swiftshadow 2.x update() might be async, but ProxyInterface.update() 
-            # in older 0.1.0/1.x was synchronous and called run(). 
-            # In 2.x, we should check if it's async. 
-            # Based on the error logs, it's calling self.update() in __init__.
-            pass 
-        except Exception as e:
-            logger.error(f"Failed to update proxy manager: {e}")
-            
+    # No background threads per user request for LIVE-ONLY data
     logger.info("Server started in LIVE-ONLY mode with SwiftShadow rotation")
 
 # ============= SCRAPING FUNCTIONS =============
