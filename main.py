@@ -206,18 +206,46 @@ def debug_fetch(url: str = "https://tradingeconomics.com/calendar"):
     """Debug endpoint to test external connectivity and status codes"""
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         response = requests.get(url, headers=headers, timeout=10)
         return {
             "url": url,
             "status_code": response.status_code,
             "length": len(response.text),
-            "sample": response.text[:500],
+            "sample": response.text[:500] if response.status_code == 200 else "",
             "is_blocked": "access denied" in response.text.lower() or "forbidden" in response.text.lower()
         }
     except Exception as e:
         return {"error": str(e)}
+
+@app.get("/debug/calendar")
+def debug_calendar(date_from: str = "2025-12-15", date_to: str = "2025-12-21"):
+    """Run scraper directly and return results"""
+    try:
+        events = scrape_trading_economics(date_from, date_to)
+        return {
+            "count": len(events),
+            "events_sample": events[:5] if events else []
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/debug/cache")
+def debug_cache_view():
+    """View current cache state"""
+    return {
+        "cache_keys": list(CACHE.keys()),
+        "entry_counts": {k: len(v[1]) for k, v in CACHE.items()}
+    }
+
+@app.get("/debug/clear_cache")
+def debug_clear_cache():
+    """Clear the in-memory cache"""
+    global CACHE
+    CACHE = {}
+    save_cache()
+    return {"status": "Cache cleared"}
 
 def load_cache():
     """Load cache from disk on startup"""
