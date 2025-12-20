@@ -156,7 +156,13 @@ def fetch_with_retry(url: str, max_retries: int = 5, use_proxy: bool = True) -> 
                     proxy_str = proxy_obj.as_string()
                 elif hasattr(manager, 'proxy'):
                     # SwiftShadow v1.x (Legacy)
-                    proxy_str = manager.proxy
+                    # manager.proxy is a method that returns ['host:port', 'protocol']
+                    res = manager.proxy() if callable(manager.proxy) else manager.proxy
+                    if isinstance(res, list) and len(res) > 0:
+                        proxy_str = res[0]
+                    else:
+                        proxy_str = str(res)
+                        
                     if hasattr(manager, 'rotate'):
                         manager.rotate()
                 else:
@@ -839,7 +845,11 @@ async def proxy_status():
         if hasattr(manager, 'get'):
             proxy_str = manager.get().as_string()
         elif hasattr(manager, 'proxy'):
-            proxy_str = manager.proxy
+            res = manager.proxy() if callable(manager.proxy) else manager.proxy
+            if isinstance(res, list) and len(res) > 0:
+                proxy_str = res[0]
+            else:
+                proxy_str = str(res)
         
         return {
             "status": "healthy",
