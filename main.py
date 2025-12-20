@@ -306,19 +306,6 @@ def scrape_trading_economics(date_from: str, date_to: str, country: Optional[str
         logger.error(f"TradingEconomics error: {e}")
     
     return events
-                    forecast=cells[6].get_text(strip=True) if len(cells) > 6 else None,
-                    category=category,
-                    impact=calculated_impact,
-                    description=f"{category}",
-                    event_id=te_event_id # Add ID for frontend lookup
-                )
-                events.append(event)
-        
-        logger.info(f"TradingEconomics: Found {len(events)} events")
-    except Exception as e:
-        logger.error(f"TradingEconomics error: {e}")
-    
-    return events
 
 def scrape_investing_com(date_from: str, date_to: str, country: Optional[str] = None) -> List[CalendarEvent]:
     """Scrape Investing.com calendar using Scrapy Selector"""
