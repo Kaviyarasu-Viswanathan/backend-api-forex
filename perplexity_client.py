@@ -9,11 +9,13 @@ import os
 import sys
 from curl_cffi import requests as curl_requests
 
+from urllib.parse import urlparse
+
 class Perplexity:
     """
     A client for interacting with the Perplexity AI API via WebSockets.
     """
-    def __init__(self, token: str = None) -> None:
+    def __init__(self, token: str = None, proxy_url: str = None) -> None:
         self.session = curl_requests.Session(impersonate="chrome120")
         self.request_headers: Dict[str, str] = {
             "Sec-Fetch-User": "?1",
@@ -21,6 +23,16 @@ class Perplexity:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
         self.token = token
+        self.proxy_url = proxy_url or os.environ.get("PROXY_URL")
+        
+        # Configure Proxies for HTTP requests
+        if self.proxy_url:
+            self.session.proxies = {
+                "http": self.proxy_url,
+                "https": self.proxy_url
+            }
+            print(f"[*] Using Proxy: {self.proxy_url}", file=sys.stderr)
+
         self.session.headers.update(self.request_headers)
         
         if self.token:
@@ -104,13 +116,26 @@ class Perplexity:
         except:
             cookies_str = ""
         
+        # Proxy Configuration for WebSocket
+        proxy_opts = {}
+        if self.proxy_url:
+            try:
+                parsed = urlparse(self.proxy_url)
+                proxy_opts["http_proxy_host"] = parsed.hostname
+                proxy_opts["http_proxy_port"] = parsed.port
+                if parsed.username and parsed.password:
+                   proxy_opts["http_proxy_auth"] = (parsed.username, parsed.password)
+            except Exception as e:
+                print(f"[!] Invalid Proxy URL: {e}", file=sys.stderr)
+
         return WebSocketApp(
             url=f"wss://www.perplexity.ai/socket.io/?EIO=4&transport=websocket&sid={self.session_id}",
             header=self.request_headers,
             cookie=cookies_str,
             on_open=on_open,
             on_message=on_message,
-            on_error=lambda ws, err: print(f"WebSocket error: {err}", file=sys.stderr)
+            on_error=lambda ws, err: print(f"WebSocket error: {err}", file=sys.stderr),
+            **proxy_opts
         )
 
     def generate_answer(self, query: str, model: str = "claude-3.5-sonnet") -> Generator[Dict[str, Any], None, None]:

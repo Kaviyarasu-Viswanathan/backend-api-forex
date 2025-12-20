@@ -34,7 +34,14 @@ In the Render Dashboard for your new service, go to **Environment** from the sid
 
 - **Key**: `PERPLEXITY_TOKEN`
 - **Value**: (Your token from `.env`)
-  `eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2R0NNIn0..NG6caEamxjKf-axb.9IPgCRmzfySvR72_Xsc1M22A7VcuzxHNGU59Aoc-hNNMkWh-PBoyFDFHe-7K3wrT8Az-mF7HiUIOQISgPQxtCjMWGyUQeLI8iFdfV3svXCJ2w0fqSu6gNhLAU3NfY1qYie1_s0lyvcX0an3imz5O1SOhvfH5nrN4_-AZ2LuIpAyrGLjExJwcf69tE5vY0mkLCw3cIo5ILlB_j1pND04VBxWyWEkbW4rmceMYLA9jNODxbIpP4JuqGIeGtERPYjGC6A.mzEcwTxaKBwBb4my3R6osw`
+
+### **CRITICAL: Add Proxy to Bypass Blocking**
+Perplexity blocks Render's cloud IPs. You **MUST** use a residential proxy.
+
+1.  **Get a Proxy**: Use a provider like WebShare, Smartproxy, or Bright Data.
+2.  **Add Variable**:
+    -   **Key**: `PROXY_URL`
+    -   **Value**: `http://user:pass@host:port` (Your actual proxy URL)
 
 ## Step 4: Update Frontend
 Once deployed, Render will give you a URL (e.g., `https://forex-calendar-api.onrender.com`).
