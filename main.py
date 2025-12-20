@@ -10,6 +10,8 @@ import time
 from pydantic import BaseModel
 import json
 from itertools import cycle
+from swiftshadow import QuickProxy
+from swiftshadow.classes import ProxyInterface
 import logging
 import asyncio
 import os
@@ -20,113 +22,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Free Forex Economic Calendar API")
 
-# ============= FREE PROXY MANAGEMENT =============
-class FreeProxyRotator:
-    def __init__(self):
-        self.proxies = []
-        self.proxy_cycle = None
-        self.last_fetch_time = None
-        self.fetch_interval = 300  # 5 minutes
-        self.failed_proxies = set()
-        
-    def fetch_free_proxies(self) -> List[str]:
-        """Fetch free proxies from multiple sources"""
-        all_proxies = []
-        
-        # Source 1: PubProxy API (Free)
-        try:
-            response = requests.get(
-                "http://pubproxy.com/api/proxy?limit=5&format=json&type=http&https=true",
-                timeout=10
-            )
-            if response.status_code == 200:
-                data = response.json()
-                for proxy in data.get('data', []):
-                    all_proxies.append(f"http://{proxy['ipPort']}")
-        except Exception as e:
-            logger.error(f"PubProxy error: {e}")
-        
-        # Source 2: ProxyScrape (Free)
-        try:
-            response = requests.get(
-                "https://api.proxyscrape.com/v2/?request=get&protocol=http&timeout=10000&country=all&ssl=yes&anonymity=all&simplified=true",
-                timeout=10
-            )
-            if response.status_code == 200:
-                proxy_list = response.text.strip().split('\n')
-                all_proxies.extend([f"http://{proxy}" for proxy in proxy_list[:5]])
-        except Exception as e:
-            logger.error(f"ProxyScrape error: {e}")
-        
-        # Source 3: GetProxyList API (Free)
-        try:
-            response = requests.get(
-                "https://api.getproxylist.com/proxy?protocol[]=http&protocol[]=https",
-                timeout=10
-            )
-            if response.status_code == 200:
-                data = response.json()
-                proxy_ip = data.get('ip')
-                proxy_port = data.get('port')
-                if proxy_ip and proxy_port:
-                    all_proxies.append(f"http://{proxy_ip}:{proxy_port}")
-        except Exception as e:
-            logger.error(f"GetProxyList error: {e}")
-        
-        # Source 4: Free Proxy List (GitHub)
-        try:
-            response = requests.get(
-                "https://raw.githubusercontent.com/proxifly/free-proxy-list/main/proxies/protocols/http/data.json",
-                timeout=10
-            )
-            if response.status_code == 200:
-                data = response.json()
-                for proxy in data[:5]:
-                    all_proxies.append(f"http://{proxy['ip']}:{proxy['port']}")
-        except Exception as e:
-            logger.error(f"GitHub proxy list error: {e}")
-        
-        return list(set(all_proxies))  # Remove duplicates
-    
-    def get_proxies(self) -> List[str]:
-        """Get or refresh proxy list"""
-        current_time = time.time()
-        
-        # Refresh proxies every 5 minutes or if empty
-        if (not self.last_fetch_time or 
-            current_time - self.last_fetch_time > self.fetch_interval or 
-            not self.proxies):
-            logger.info("Fetching fresh proxies...")
-            self.proxies = self.fetch_free_proxies()
-            self.last_fetch_time = current_time
-            self.proxy_cycle = cycle(self.proxies) if self.proxies else None
-            logger.info(f"Loaded {len(self.proxies)} proxies")
-        
-        return self.proxies
-    
-    def get_next_proxy(self) -> Optional[Dict[str, str]]:
-        """Get next proxy in rotation"""
-        self.get_proxies()  # Ensure we have proxies
-        
-        if not self.proxy_cycle:
-            return None
-        
-        # Try to find a working proxy
-        for _ in range(len(self.proxies)):
-            proxy = next(self.proxy_cycle)
-            if proxy not in self.failed_proxies:
-                return {"http": proxy, "https": proxy}
-        
-        # All failed, reset and try again
-        self.failed_proxies.clear()
-        return self.get_next_proxy()
-    
-    def mark_failed(self, proxy: Dict[str, str]):
-        """Mark proxy as failed"""
-        if proxy:
-            self.failed_proxies.add(proxy.get("http"))
-
-proxy_rotator = FreeProxyRotator()
+# ============= PROXY MANAGEMENT (SwiftShadow) =============
+proxy_manager = ProxyInterface(protocol="http", autoRotate=True)
 
 # ============= DATA MODELS =============
 class CalendarEvent(BaseModel):
@@ -155,51 +52,8 @@ class NewsStory(BaseModel):
     impact: str = "Low" # Low, Medium, High (Hot)
     is_hot: bool = False
 
-# ============= CACHE STORAGE =============
-CACHE: Dict[str, Tuple[float, List[CalendarEvent]]] = {}
-CACHE_TTL = 86400  # 24 hours
-# Use absolute path relative to this file
-CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "calendar_cache.json")
-
-# NEWS CACHE
-NEWS_CACHE: Dict[str, List[NewsStory]] = {
-    "latest": [],
-    "hot": []
-}
-NEWS_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news_cache.json")
-NEWS_CACHE_TTL = 300 # 5 minutes
-
-# Track fetch status for frontend
-FETCH_STATUS: Dict[str, str] = {}  # cache_key -> "fetching" | "ready" | "error"
-
-def save_cache():
-    """Save in-memory cache to disk"""
-    try:
-        serializable_cache = {}
-        for key, (timestamp, events) in CACHE.items():
-            serializable_cache[key] = {
-                "timestamp": timestamp,
-                "events": [event.dict() for event in events]
-            }
-        
-        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(serializable_cache, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved {len(CACHE)} cache entries to {CACHE_FILE}")
-    except Exception as e:
-        logger.error(f"Failed to save cache: {e}")
-
-def save_news_cache():
-    """Save news cache to disk"""
-    try:
-        serializable_news = {
-            "latest": [n.dict() for n in NEWS_CACHE["latest"]],
-            "hot": [n.dict() for n in NEWS_CACHE["hot"]]
-        }
-        with open(NEWS_CACHE_FILE, 'w', encoding='utf-8') as f:
-            json.dump(serializable_news, f, ensure_ascii=False, indent=2)
-        logger.info(f"Saved news cache to {NEWS_CACHE_FILE}")
-    except Exception as e:
-        logger.error(f"Failed to save news cache: {e}")
+# ============= DATA MODELS =============
+# ... (models remain the same)
 
 @app.get("/debug/fetch")
 def debug_fetch(url: str = "https://tradingeconomics.com/calendar"):
@@ -231,142 +85,16 @@ def debug_calendar(date_from: str = "2025-12-15", date_to: str = "2025-12-21"):
     except Exception as e:
         return {"error": str(e)}
 
-@app.get("/debug/cache")
-def debug_cache_view():
-    """View current cache state"""
-    return {
-        "cache_keys": list(CACHE.keys()),
-        "entry_counts": {k: len(v[1]) for k, v in CACHE.items()}
-    }
-
-@app.get("/debug/clear_cache")
-def debug_clear_cache():
-    """Clear the in-memory cache"""
-    global CACHE
-    CACHE = {}
-    save_cache()
-    return {"status": "Cache cleared"}
-
-def load_cache():
-    """Load cache from disk on startup"""
-    global CACHE
-    try:
-        if os.path.exists(CACHE_FILE):
-            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            loaded_cache = {}
-            for key, value in data.items():
-                events = [CalendarEvent(**e) for e in value['events']]
-                loaded_cache[key] = (value['timestamp'], events)
-            
-            CACHE = loaded_cache
-            logger.info(f"Loaded {len(CACHE)} cache entries from {CACHE_FILE}")
-            
-            # Prune old cache
-            current_time = time.time()
-            expired_keys = [k for k, (ts, _) in CACHE.items() if current_time - ts > CACHE_TTL]
-            for k in expired_keys:
-                del CACHE[k]
-                
-    except Exception as e:
-        logger.error(f"Failed to load cache: {e}")
-
-def load_news_cache():
-    """Load news cache from disk"""
-    global NEWS_CACHE
-    try:
-        if os.path.exists(NEWS_CACHE_FILE):
-            with open(NEWS_CACHE_FILE, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            NEWS_CACHE["latest"] = [NewsStory(**n) for n in data.get("latest", [])]
-            NEWS_CACHE["hot"] = [NewsStory(**n) for n in data.get("hot", [])]
-            logger.info(f"Loaded {len(NEWS_CACHE['latest'])} latest and {len(NEWS_CACHE['hot'])} hot news stories")
-    except Exception as e:
-        logger.error(f"Failed to load news cache: {e}")
-
-def background_prefetch():
-    """Prefetch next 30 days of data in background - runs every 5 minutes"""
-    time.sleep(5)  # Wait for server to fully start
-    
-    while True:  # Loop forever
-        logger.info("Starting background data refresh...")
-        
-        try:
-            # Prefetch today-7 to today+30 days (wide range for all queries)
-            today = datetime.now()
-            date_from = (today - timedelta(days=7)).strftime('%Y-%m-%d')
-            date_to = (today + timedelta(days=30)).strftime('%Y-%m-%d')
-            
-            # Scrape data
-            logger.info(f"Fetching data for {date_from} to {date_to}...")
-            all_events = scrape_trading_economics(date_from, date_to)
-            
-            if all_events:
-                # Store in cache with multiple key patterns for flexibility
-                cache_keys = [
-                    f"{date_from}_{date_to}_None_all",
-                    f"{today.strftime('%Y-%m-%d')}_{(today + timedelta(days=7)).strftime('%Y-%m-%d')}_None_all",
-                    f"{today.strftime('%Y-%m-%d')}_{(today + timedelta(days=14)).strftime('%Y-%m-%d')}_None_all",
-                ]
-                for key in cache_keys:
-                    CACHE[key] = (time.time(), all_events)
-                
-                save_cache()
-                logger.info(f"Background refresh complete: {len(all_events)} events cached")
-            else:
-                logger.warning("Background refresh found zero events")
-                
-        except Exception as e:
-            logger.error(f"Background refresh failed: {e}")
-        
-        # Wait 5 minutes before next refresh
-        logger.info("Next refresh in 5 minutes...")
-        time.sleep(300)  # 5 minutes
+# Caching disabled per user request
 
 @app.on_event("startup")
 async def startup_event():
-    load_cache()
-    load_news_cache()
-    
-    # Start background calendar data refresh (5 mins)
-    thread = Thread(target=background_prefetch)
-    thread.daemon = True
-    thread.start()
-    
-    # Start background news refresh (5 mins)
-    news_thread = Thread(target=background_news_refresh)
-    news_thread.daemon = True
-    news_thread.start()
-    
-    logger.info("Background refresh threads started")
-
-def background_news_refresh():
-    """Refresh news every 5 minutes"""
-    time.sleep(10) # Initial delay
-    
-    while True:
-        try:
-            logger.info("Refreshing ForexFactory news...")
-            latest, hot = scrape_forexfactory_news()
-            
-            if latest:
-                NEWS_CACHE["latest"] = latest
-            if hot:
-                NEWS_CACHE["hot"] = hot
-                
-            if latest or hot:
-                save_news_cache()
-                
-        except Exception as e:
-            logger.error(f"Background news refresh failed: {e}")
-            
-        time.sleep(300) # 5 minutes
+    # No background threads per user request for LIVE-ONLY data
+    logger.info("Server started in LIVE-ONLY mode with SwiftShadow rotation")
 
 # ============= SCRAPING FUNCTIONS =============
-def fetch_with_retry(url: str, max_retries: int = 3, use_proxy: bool = True) -> Optional[requests.Response]:
-    """Fetch URL with retry logic and IP rotation"""
+def fetch_with_retry(url: str, max_retries: int = 5, use_proxy: bool = True) -> Optional[requests.Response]:
+    """Fetch URL with retry logic using SwiftShadow IP rotation"""
     
     user_agents = [
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -389,37 +117,35 @@ def fetch_with_retry(url: str, max_retries: int = 3, use_proxy: bool = True) -> 
                 'Cache-Control': 'max-age=0'
             }
             
-            # Try with proxy first
-            if use_proxy and attempt > 0:  # Use proxy after first direct attempt fails
-                proxy = proxy_rotator.get_next_proxy()
-                if proxy:
-                    logger.info(f"Attempt {attempt + 1} with proxy: {proxy.get('http')}")
-                    try:
-                        response = requests.get(url, headers=headers, proxies=proxy, timeout=15)
-                        if response.status_code == 200 and len(response.text) > 500:
-                            return response
-                        proxy_rotator.mark_failed(proxy)
-                    except:
-                        proxy_rotator.mark_failed(proxy)
+            # SwiftShadow Rotation
+            # Every request gets a fresh proxy from the manager
+            proxy_obj = proxy_manager.get()
+            proxy_str = proxy_obj.as_string()
+            proxies = {"http": proxy_str, "https": proxy_str}
             
-            # Direct request (no proxy)
-            logger.info(f"Attempt {attempt + 1} direct request")
-            response = requests.get(url, headers=headers, timeout=15)
+            logger.info(f"Attempt {attempt + 1} with SwiftShadow proxy: {proxy_str}")
             
-            if response.status_code == 200 and len(response.text) > 500:
-                return response
+            try:
+                # Always use proxy as requested by user to avoid Render IP blacklist
+                response = requests.get(url, headers=headers, proxies=proxies, timeout=20)
+                
+                if response.status_code == 200 and len(response.text) > 500:
+                    return response
+                
+                if response.status_code in [403, 429]:
+                    logger.warning(f"Blocked or Rate Limited (Status {response.status_code}). Rotating...")
+                else:
+                    logger.warning(f"Request failed with status {response.status_code}")
+                    
+            except Exception as e:
+                logger.error(f"Proxy request error: {e}")
             
-            # Rate limiting detected, wait longer
-            if response.status_code in [429, 403]:
-                wait_time = random.uniform(5, 10) * (attempt + 1)
-                logger.warning(f"Rate limited, waiting {wait_time}s")
-                time.sleep(wait_time)
-            else:
-                time.sleep(random.uniform(2, 4))
+            # Wait briefly between retries
+            time.sleep(random.uniform(1, 3))
             
         except Exception as e:
-            logger.error(f"Attempt {attempt + 1} failed: {e}")
-            time.sleep(random.uniform(3, 6))
+            logger.error(f"Fetch internal error: {e}")
+            time.sleep(2)
     
     return None
 
@@ -930,55 +656,18 @@ async def get_calendar(
         else:
             effective_from = effective_to = today.strftime('%Y-%m-%d')
     
-    # Check cache - ALWAYS return cached data instantly (never block on scraping)
-    cache_key = f"{effective_from}_{effective_to}_{country}_{sources}"
-    
-    # Try exact match first
-    if cache_key in CACHE:
-        timestamp, cached_data = CACHE[cache_key]
-        if time.time() - timestamp < CACHE_TTL:
-            logger.info(f"Serving cached data for {cache_key}")
-            return cached_data
-    
-    # Try to find a cache entry that covers the SAME range exactly
-    # Note: We already checked exact key, but maybe a different source/country filter has the data
-    # For simplicity, if we don't have an exact match, we should probably scrape if it's a small range
-    # BUT to avoid overloading, let's at least check if we have data for the START and END dates
-    
-    has_start = False
-    has_end = False
-    best_filtered = []
-
-    for key, (timestamp, cached_data) in CACHE.items():
-        if time.time() - timestamp < CACHE_TTL and cached_data:
-            filtered = [e for e in cached_data if effective_from <= e.date <= effective_to]
-            if filtered:
-                dates_in_cache = {e.date for e in filtered}
-                if effective_from in dates_in_cache: has_start = True
-                if effective_to in dates_in_cache: has_end = True
-                if len(filtered) > len(best_filtered):
-                    best_filtered = filtered
-
-    # If we have a good coverage (at least start and end dates present for a range > 1 day)
-    # Or if it's a single day and we have it
-    if (effective_from == effective_to and best_filtered) or (has_start and has_end):
-        logger.info(f"Serving adequate cached data ({len(best_filtered)} events) for {cache_key}")
-        return best_filtered
-    
-    # No cache available - Force Scrape
-    logger.info(f"No cache for {cache_key}, scraping live...")
+    # LIVE ONLY: Caching disabled per user request
+    logger.info(f"LIVE-ONLY mode: Scraping fresh data for {cache_key}...")
     
     try:
         # Scrape live (blocking)
         live_data = scrape_trading_economics(effective_from, effective_to, country)
         if not live_data:
              # Fallback to other sources
+             logger.info("TradingEconomics empty, trying Investing.com...")
              live_data.extend(scrape_investing_com(effective_from, effective_to, country))
         
         if live_data:
-            # Cache the result
-            CACHE[cache_key] = (time.time(), live_data)
-            save_cache()
             return live_data
     except Exception as e:
         logger.error(f"Live scrape failed: {e}")
@@ -1072,10 +761,11 @@ async def navigate_calendar(
 async def get_news(
     type: str = Query("latest", description="News type: 'latest' or 'hot'")
 ):
-    """Get latest or hot news from ForexFactory"""
+    """Get live news from ForexFactory (LIVE ONLY)"""
+    latest, hot = scrape_forexfactory_news()
     if type.lower() == "hot":
-        return NEWS_CACHE["hot"]
-    return NEWS_CACHE["latest"]
+        return hot
+    return latest
 
 @app.get("/calendar/sources")
 async def get_sources():
@@ -1117,14 +807,21 @@ async def get_sources():
 
 @app.get("/proxy/status")
 async def proxy_status():
-    """Check proxy rotation status"""
-    proxies = proxy_rotator.get_proxies()
-    return {
-        "active_proxies": len(proxies),
-        "failed_proxies": len(proxy_rotator.failed_proxies),
-        "last_refresh": proxy_rotator.last_fetch_time,
-        "status": "healthy" if proxies else "no_proxies"
-    }
+    """Check SwiftShadow proxy rotation status"""
+    try:
+        # Get current proxy to verify it's working
+        proxy = proxy_manager.get()
+        return {
+            "status": "healthy",
+            "provider": "SwiftShadow",
+            "current_proxy": proxy.as_string(),
+            "auto_rotate": True
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 @app.get("/dates/calendar/{year}/{month}")
 async def get_month_calendar(year: int, month: int):
