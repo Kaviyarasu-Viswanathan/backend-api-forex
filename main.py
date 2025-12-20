@@ -201,6 +201,24 @@ def save_news_cache():
     except Exception as e:
         logger.error(f"Failed to save news cache: {e}")
 
+@app.get("/debug/fetch")
+def debug_fetch(url: str = "https://tradingeconomics.com/calendar"):
+    """Debug endpoint to test external connectivity and status codes"""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        return {
+            "url": url,
+            "status_code": response.status_code,
+            "length": len(response.text),
+            "sample": response.text[:500],
+            "is_blocked": "access denied" in response.text.lower() or "forbidden" in response.text.lower()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 def load_cache():
     """Load cache from disk on startup"""
     global CACHE
