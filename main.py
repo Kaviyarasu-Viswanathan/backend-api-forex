@@ -686,7 +686,7 @@ async def get_calendar(
             effective_from = effective_to = today.strftime('%Y-%m-%d')
     
     # LIVE ONLY: Caching disabled per user request
-    logger.info(f"LIVE-ONLY mode: Scraping fresh data for {cache_key}...")
+    logger.info(f"LIVE-ONLY mode: Scraping fresh data for {effective_from} to {effective_to}...")
     
     try:
         # Scrape live (blocking)
