@@ -412,14 +412,31 @@ def scrape_trading_economics(date_from: str, date_to: str, country: Optional[str
                 header_text = date_header.get_text(strip=True)
                 # Try to parse date
                 try:
-                    # Remove any extra text 
+                    # Clean up the text
                     clean_text = header_text.replace(',', '').split('   ')[0].strip()
-                    # Parse "Friday December 12 2025"
-                    parsed_dt = datetime.strptime(clean_text, '%A %B %d %Y')
-                    current_date_str = parsed_dt.strftime('%Y-%m-%d')
+                    # Handle Trading economics format which might have extra spaces
+                    # e.g. "Sunday December 07 2025"
+                    
+                    # If it contains "Today" or "Tomorrow", calculate real date
+                    today_dt = datetime.now()
+                    if "Today" in clean_text:
+                        current_date_str = today_dt.strftime('%Y-%m-%d')
+                    elif "Tomorrow" in clean_text:
+                        current_date_str = (today_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+                    else:
+                        # Try common formats
+                        for fmt in ('%A %B %d %Y', '%B %d %Y', '%A %B %d'):
+                            try:
+                                parsed_dt = datetime.strptime(clean_text, fmt)
+                                if fmt == '%A %B %d': # Year missing
+                                    parsed_dt = parsed_dt.replace(year=today_dt.year)
+                                current_date_str = parsed_dt.strftime('%Y-%m-%d')
+                                break
+                            except ValueError:
+                                continue
                     continue
-                except ValueError:
-                    # Ignore if not a date (some headers are just "Actual" etc)
+                except Exception as e:
+                    logger.error(f"Date parse error for '{header_text}': {e}")
                     pass
             
             # Use recursive=False to avoid finding nested table cells
@@ -844,17 +861,30 @@ async def get_calendar(
             logger.info(f"Serving cached data for {cache_key}")
             return cached_data
     
-    # Try to find ANY cached data that overlaps with the requested range
+    # Try to find a cache entry that covers the SAME range exactly
+    # Note: We already checked exact key, but maybe a different source/country filter has the data
+    # For simplicity, if we don't have an exact match, we should probably scrape if it's a small range
+    # BUT to avoid overloading, let's at least check if we have data for the START and END dates
+    
+    has_start = False
+    has_end = False
+    best_filtered = []
+
     for key, (timestamp, cached_data) in CACHE.items():
         if time.time() - timestamp < CACHE_TTL and cached_data:
-            # Filter events to match requested date range
-            filtered = [
-                e for e in cached_data 
-                if effective_from <= e.date <= effective_to
-            ]
+            filtered = [e for e in cached_data if effective_from <= e.date <= effective_to]
             if filtered:
-                logger.info(f"Serving partial cached data ({len(filtered)} events) for {cache_key}")
-                return filtered
+                dates_in_cache = {e.date for e in filtered}
+                if effective_from in dates_in_cache: has_start = True
+                if effective_to in dates_in_cache: has_end = True
+                if len(filtered) > len(best_filtered):
+                    best_filtered = filtered
+
+    # If we have a good coverage (at least start and end dates present for a range > 1 day)
+    # Or if it's a single day and we have it
+    if (effective_from == effective_to and best_filtered) or (has_start and has_end):
+        logger.info(f"Serving adequate cached data ({len(best_filtered)} events) for {cache_key}")
+        return best_filtered
     
     # No cache available - Force Scrape
     logger.info(f"No cache for {cache_key}, scraping live...")
