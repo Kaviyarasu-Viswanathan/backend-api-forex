@@ -394,53 +394,76 @@ def scrape_trading_economics(date_from: str, date_to: str, country: Optional[str
             return events
         
         soup = BeautifulSoup(response.text, 'html.parser')
-        table = soup.find('table', {'id': 'calendar'}) or soup.find('table', {'class': 'table'})
+        # Find all tables that might contain the calendar (often class 'table')
+        tables = soup.find_all('table', {'class': 'table'})
+        if not tables:
+            tables = [soup.find('table', {'id': 'calendar'})]
         
-        if not table:
-            logger.warning("TradingEconomics: Calendar table not found")
+        tables = [t for t in tables if t]
+        if not tables:
+            logger.warning("TradingEconomics: No calendar tables found")
             return events
         
         current_date_str = date_from # Fallback
-        rows = table.find_all('tr')
-        
-        for row in rows:
-            # Check for date header (often colspan=3 or hidden-xs)
-            # TE format: "Sunday December 07 2025" or similar
-            date_header = row.find('th', {'colspan': True}) or row.find('td', {'colspan': True})
-            
-            if date_header:
-                header_text = date_header.get_text(strip=True)
-                # Try to parse date
-                try:
-                    # Clean up the text
-                    clean_text = header_text.replace(',', '').split('   ')[0].strip()
-                    # Handle Trading economics format which might have extra spaces
-                    # e.g. "Sunday December 07 2025"
+        today_dt = datetime.now()
+
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                # Check for date header (often colspan or th)
+                date_header = row.find('th', {'colspan': True}) or row.find('td', {'colspan': True})
+                
+                if date_header:
+                    header_text = date_header.get_text(strip=True)
+                    if not header_text: continue
                     
-                    # If it contains "Today" or "Tomorrow", calculate real date
-                    today_dt = datetime.now()
-                    if "Today" in clean_text:
-                        current_date_str = today_dt.strftime('%Y-%m-%d')
-                    elif "Tomorrow" in clean_text:
-                        current_date_str = (today_dt + timedelta(days=1)).strftime('%Y-%m-%d')
-                    else:
-                        # Try common formats
-                        for fmt in ('%A %B %d %Y', '%B %d %Y', '%A %B %d'):
+                    # Try to parse date
+                    try:
+                        # Clean up: "Friday December 19 2025 ..." -> remove extra stuff
+                        # We split by common delimiters or just take the first part
+                        clean_text = header_text.replace(',', '').strip()
+                        
+                        # Handle "Today" / "Tomorrow"
+                        if "Today" in clean_text:
+                            current_date_str = today_dt.strftime('%Y-%m-%d')
+                            continue
+                        elif "Tomorrow" in clean_text:
+                            current_date_str = (today_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+                            continue
+                        
+                        # Remove weekday if it's there at the start "Friday December 19 2025"
+                        # We try to match formats
+                        parsed_dt = None
+                        for fmt in ('%A %B %d %Y', '%B %d %Y', '%A %B %d', '%Y-%m-%d'):
                             try:
+                                # We check if the string starts with the format or is the format
+                                # To be safe, try to extract a date-like substring
+                                # But for now, just try direct parsing of the clean text
                                 parsed_dt = datetime.strptime(clean_text, fmt)
-                                if fmt == '%A %B %d': # Year missing
+                                if fmt == '%A %B %d':
                                     parsed_dt = parsed_dt.replace(year=today_dt.year)
-                                current_date_str = parsed_dt.strftime('%Y-%m-%d')
                                 break
                             except ValueError:
+                                # Try to see if wait... maybe the text has extra noise?
+                                # "Friday December 19 2025 09:00AM" -> try to strip time
+                                if len(clean_text.split()) > 4:
+                                    clean_short = " ".join(clean_text.split()[:4])
+                                    try:
+                                        parsed_dt = datetime.strptime(clean_short, '%A %B %d %Y')
+                                        break
+                                    except ValueError: pass
                                 continue
-                    continue
-                except Exception as e:
-                    logger.error(f"Date parse error for '{header_text}': {e}")
-                    pass
-            
-            # Use recursive=False to avoid finding nested table cells
-            cells = row.find_all('td', recursive=False)
+                        
+                        if parsed_dt:
+                            current_date_str = parsed_dt.strftime('%Y-%m-%d')
+                            continue
+                        
+                    except Exception as e:
+                        logger.debug(f"Row skipped as non-date header: {header_text}")
+                        pass
+                
+                # Use recursive=False to avoid finding nested table cells
+                cells = row.find_all('td', recursive=False)
             
             if len(cells) >= 4:
                 # Extract metadata
