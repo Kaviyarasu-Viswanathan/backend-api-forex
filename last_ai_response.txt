@@ -1,0 +1,311 @@
+[
+  {
+    "date": "2025-12-20",
+    "time": "02:00",
+    "country": "US",
+    "event": "US President Trump Speech",
+    "currency": "USD",
+    "impact": "High",
+    "previous": null,
+    "forecast": null,
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "01:15",
+    "country": "CN",
+    "event": "Loan Prime Rate 1Y",
+    "currency": "CNY",
+    "impact": "Medium",
+    "previous": "3%",
+    "forecast": "3%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "01:15",
+    "country": "CN",
+    "event": "Loan Prime Rate 5Y",
+    "currency": "CNY",
+    "impact": "Medium",
+    "previous": "3.5%",
+    "forecast": "3.5%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "07:00",
+    "country": "GB",
+    "event": "Current Account Q3",
+    "currency": "GBP",
+    "impact": "Medium",
+    "previous": "-£28.9B",
+    "forecast": "-£21.5B",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "07:00",
+    "country": "GB",
+    "event": "GDP Growth Rate QoQ Q3",
+    "currency": "GBP",
+    "impact": "Low",
+    "previous": "0.3%",
+    "forecast": "0.1%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "09:00",
+    "country": "EU",
+    "event": "Balance of Trade Oct",
+    "currency": "EUR",
+    "impact": "Medium",
+    "previous": "-€6B",
+    "forecast": "-€6.4B",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "13:30",
+    "country": "US",
+    "event": "Chicago Fed National Activity Index Sep",
+    "currency": "USD",
+    "impact": "Medium",
+    "previous": "-0.12",
+    "forecast": "-0.4",
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "00:30",
+    "country": "AU",
+    "event": "RBA Meeting Minutes",
+    "currency": "AUD",
+    "impact": "High",
+    "previous": null,
+    "forecast": null,
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "13:30",
+    "country": "US",
+    "event": "Durable Goods Orders MoM Oct",
+    "currency": "USD",
+    "impact": "High",
+    "previous": "0.5%",
+    "forecast": "0.4%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "13:30",
+    "country": "US",
+    "event": "GDP Growth Rate QoQ Q3",
+    "currency": "USD",
+    "impact": "High",
+    "previous": "3.8%",
+    "forecast": "3.2%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "14:15",
+    "country": "US",
+    "event": "Industrial Production MoM Nov",
+    "currency": "USD",
+    "impact": "Medium",
+    "previous": "0",
+    "forecast": null,
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "15:00",
+    "country": "US",
+    "event": "CB Consumer Confidence Dec",
+    "currency": "USD",
+    "impact": "Medium",
+    "previous": "88.7",
+    "forecast": "89",
+    "actual": null
+  },
+  {
+    "date": "2025-12-24",
+    "time": "13:30",
+    "country": "US",
+    "event": "Initial Jobless Claims Dec/20",
+    "currency": "USD",
+    "impact": "High",
+    "previous": "224K",
+    "forecast": "225K",
+    "actual": null
+  },
+  {
+    "date": "2025-12-27",
+    "time": "01:30",
+    "country": "CN",
+    "event": "Industrial Profits YTD YoY Nov",
+    "currency": "CNY",
+    "impact": "Low",
+    "previous": "1.9%",
+    "forecast": "2.2%",
+    "actual": null
+  }
+][
+  {
+    "date": "2025-12-20",
+    "time": "02:00",
+    "country": "US",
+    "event": "US President Trump Speech",
+    "currency": "USD",
+    "impact": "High",
+    "previous": null,
+    "forecast": null,
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "01:15",
+    "country": "CN",
+    "event": "Loan Prime Rate 1Y",
+    "currency": "CNY",
+    "impact": "Medium",
+    "previous": "3%",
+    "forecast": "3%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "01:15",
+    "country": "CN",
+    "event": "Loan Prime Rate 5Y",
+    "currency": "CNY",
+    "impact": "Medium",
+    "previous": "3.5%",
+    "forecast": "3.5%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "07:00",
+    "country": "GB",
+    "event": "Current Account Q3",
+    "currency": "GBP",
+    "impact": "Medium",
+    "previous": "-£28.9B",
+    "forecast": "-£21.5B",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "07:00",
+    "country": "GB",
+    "event": "GDP Growth Rate QoQ Q3",
+    "currency": "GBP",
+    "impact": "Low",
+    "previous": "0.3%",
+    "forecast": "0.1%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "09:00",
+    "country": "EU",
+    "event": "Balance of Trade Oct",
+    "currency": "EUR",
+    "impact": "Medium",
+    "previous": "-€6B",
+    "forecast": "-€6.4B",
+    "actual": null
+  },
+  {
+    "date": "2025-12-22",
+    "time": "13:30",
+    "country": "US",
+    "event": "Chicago Fed National Activity Index Sep",
+    "currency": "USD",
+    "impact": "Medium",
+    "previous": "-0.12",
+    "forecast": "-0.4",
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "00:30",
+    "country": "AU",
+    "event": "RBA Meeting Minutes",
+    "currency": "AUD",
+    "impact": "High",
+    "previous": null,
+    "forecast": null,
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "13:30",
+    "country": "US",
+    "event": "Durable Goods Orders MoM Oct",
+    "currency": "USD",
+    "impact": "High",
+    "previous": "0.5%",
+    "forecast": "0.4%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "13:30",
+    "country": "US",
+    "event": "GDP Growth Rate QoQ Q3",
+    "currency": "USD",
+    "impact": "High",
+    "previous": "3.8%",
+    "forecast": "3.2%",
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "14:15",
+    "country": "US",
+    "event": "Industrial Production MoM Nov",
+    "currency": "USD",
+    "impact": "Medium",
+    "previous": "0",
+    "forecast": null,
+    "actual": null
+  },
+  {
+    "date": "2025-12-23",
+    "time": "15:00",
+    "country": "US",
+    "event": "CB Consumer Confidence Dec",
+    "currency": "USD",
+    "impact": "Medium",
+    "previous": "88.7",
+    "forecast": "89",
+    "actual": null
+  },
+  {
+    "date": "2025-12-24",
+    "time": "13:30",
+    "country": "US",
+    "event": "Initial Jobless Claims Dec/20",
+    "currency": "USD",
+    "impact": "High",
+    "previous": "224K",
+    "forecast": "225K",
+    "actual": null
+  },
+  {
+    "date": "2025-12-27",
+    "time": "01:30",
+    "country": "CN",
+    "event": "Industrial Profits YTD YoY Nov",
+    "currency": "CNY",
+    "impact": "Low",
+    "previous": "1.9%",
+    "forecast": "2.2%",
+    "actual": null
+  }
+]
