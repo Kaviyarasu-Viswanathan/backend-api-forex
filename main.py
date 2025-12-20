@@ -391,8 +391,18 @@ def scrape_trading_economics(date_from: str, date_to: str, country: Optional[str
         response = fetch_with_retry(url)
         
         if not response:
+            logger.error("TradingEconomics: Fetch failed (None response)")
             return events
         
+        logger.info(f"TradingEconomics: Status {response.status_code}, Length {len(response.text)}")
+        if response.status_code != 200:
+            logger.error(f"TradingEconomics: Non-200 status code: {response.status_code}")
+            return events
+
+        if "access denied" in response.text.lower() or "forbidden" in response.text.lower():
+            logger.error("TradingEconomics: Access denied/Forbidden detected in response body")
+            return events
+
         soup = BeautifulSoup(response.text, 'html.parser')
         # Find all tables that might contain the calendar (often class 'table')
         tables = soup.find_all('table', {'class': 'table'})
