@@ -10,8 +10,18 @@ import time
 from pydantic import BaseModel
 import json
 from itertools import cycle
-from swiftshadow import QuickProxy
-from swiftshadow.classes import ProxyInterface
+try:
+    from swiftshadow.classes import ProxyInterface
+except ImportError:
+    try:
+        # Fallback for older versions where it was named 'Proxy'
+        from swiftshadow.classes import Proxy as ProxyInterface
+    except ImportError:
+        # If classes nested structure fails, try top-level (some libraries export to __init__)
+        try:
+            from swiftshadow import ProxyInterface
+        except ImportError:
+            from swiftshadow import Proxy as ProxyInterface
 import logging
 import asyncio
 import os
