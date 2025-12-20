@@ -7,3 +7,4 @@ pydantic
 swiftshadow
 aiohttp
 nest-asyncio
+scrapy

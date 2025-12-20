@@ -22,6 +22,7 @@ except ImportError:
             from swiftshadow import ProxyInterface
         except ImportError:
             from swiftshadow import Proxy as ProxyInterface
+from scrapy import Selector
 import logging
 import asyncio
 import os
@@ -146,12 +147,26 @@ def fetch_with_retry(url: str, max_retries: int = 5, use_proxy: bool = True) -> 
             if not manager:
                 logger.error("Failed to initialize swiftshadow proxy manager")
                 return None
-                
-            # Every request gets a fresh proxy from the manager
-            proxy_obj = manager.get()
-            proxy_str = proxy_obj.as_string()
-            proxies = {"http": proxy_str, "https": proxy_str}
             
+            proxy_str = ""
+            try:
+                if hasattr(manager, 'get'):
+                    # SwiftShadow v2.x (Modern)
+                    proxy_obj = manager.get()
+                    proxy_str = proxy_obj.as_string()
+                elif hasattr(manager, 'proxy'):
+                    # SwiftShadow v1.x (Legacy)
+                    proxy_str = manager.proxy
+                    if hasattr(manager, 'rotate'):
+                        manager.rotate()
+                else:
+                    logger.error(f"Unknown proxy manager type: {type(manager)}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error getting proxy from manager: {e}")
+                return None
+                
+            proxies = {"http": proxy_str, "https": proxy_str}
             logger.info(f"Attempt {attempt + 1} with SwiftShadow proxy: {proxy_str}")
             
             try:
@@ -181,7 +196,7 @@ def fetch_with_retry(url: str, max_retries: int = 5, use_proxy: bool = True) -> 
 # ============= CALENDAR PARSERS =============
 
 def scrape_trading_economics(date_from: str, date_to: str, country: Optional[str] = None) -> List[CalendarEvent]:
-    """Scrape Trading Economics calendar"""
+    """Scrape Trading Economics calendar using Scrapy Selector"""
     events = []
     try:
         url = f"https://tradingeconomics.com/calendar?c=&d1={date_from}&d2={date_to}"
@@ -204,106 +219,93 @@ def scrape_trading_economics(date_from: str, date_to: str, country: Optional[str
             logger.error("TradingEconomics: Access denied/Forbidden detected in response body")
             return events
 
-        soup = BeautifulSoup(response.text, 'html.parser')
-        # Find all tables that might contain the calendar (often class 'table')
-        tables = soup.find_all('table', {'class': 'table'})
-        if not tables:
-            tables = [soup.find('table', {'id': 'calendar'})]
+        sel = Selector(text=response.text)
         
-        tables = [t for t in tables if t]
-        if not tables:
-            logger.warning("TradingEconomics: No calendar tables found")
-            return events
+        # TradingEconomics rows are usually <tr> with class 'table-row' or similar
+        # Or they are inside a table with ID 'calendar'
+        rows = sel.css('table#calendar tr, table.table tr')
         
-        current_date_str = date_from # Fallback
+        current_date_str = date_from
         today_dt = datetime.now()
 
-        for table in tables:
-            rows = table.find_all('tr')
-            for row in rows:
-                # Check for date header (often colspan or th)
-                date_header = row.find('th', {'colspan': True}) or row.find('td', {'colspan': True})
-                
-                if date_header:
-                    header_text = date_header.get_text(strip=True)
-                    if not header_text: continue
+        for row in rows:
+            # Check for date header
+            # Usually <th colspan=".." class="table-header"> or similar
+            date_text = row.css('th[colspan]::text, td[colspan] b::text, td[colspan]::text').get()
+            if date_text:
+                header_text = date_text.strip()
+                if header_text:
+                    # Parse date (logic remain same or improved)
+                    clean_text = header_text.replace(',', '').strip()
+                    if "Today" in clean_text:
+                        current_date_str = today_dt.strftime('%Y-%m-%d')
+                        continue
+                    elif "Tomorrow" in clean_text:
+                        current_date_str = (today_dt + timedelta(days=1)).strftime('%Y-%m-%d')
+                        continue
                     
-                    # Try to parse date
-                    try:
-                        # Clean up: "Friday December 19 2025 ..." -> remove extra stuff
-                        # We split by common delimiters or just take the first part
-                        clean_text = header_text.replace(',', '').strip()
-                        
-                        # Handle "Today" / "Tomorrow"
-                        if "Today" in clean_text:
-                            current_date_str = today_dt.strftime('%Y-%m-%d')
+                    parsed_dt = None
+                    for fmt in ('%A %B %d %Y', '%B %d %Y', '%A %B %d', '%Y-%m-%d'):
+                        try:
+                            parsed_dt = datetime.strptime(clean_text, fmt)
+                            if fmt == '%A %B %d':
+                                parsed_dt = parsed_dt.replace(year=today_dt.year)
+                            break
+                        except ValueError:
+                            if len(clean_text.split()) > 4:
+                                clean_short = " ".join(clean_text.split()[:4])
+                                try:
+                                    parsed_dt = datetime.strptime(clean_short, '%A %B %d %Y')
+                                    break
+                                except ValueError: pass
                             continue
-                        elif "Tomorrow" in clean_text:
-                            current_date_str = (today_dt + timedelta(days=1)).strftime('%Y-%m-%d')
-                            continue
-                        
-                        # Remove weekday if it's there at the start "Friday December 19 2025"
-                        # We try to match formats
-                        parsed_dt = None
-                        for fmt in ('%A %B %d %Y', '%B %d %Y', '%A %B %d', '%Y-%m-%d'):
-                            try:
-                                # We check if the string starts with the format or is the format
-                                # To be safe, try to extract a date-like substring
-                                # But for now, just try direct parsing of the clean text
-                                parsed_dt = datetime.strptime(clean_text, fmt)
-                                if fmt == '%A %B %d':
-                                    parsed_dt = parsed_dt.replace(year=today_dt.year)
-                                break
-                            except ValueError:
-                                # Try to see if wait... maybe the text has extra noise?
-                                # "Friday December 19 2025 09:00AM" -> try to strip time
-                                if len(clean_text.split()) > 4:
-                                    clean_short = " ".join(clean_text.split()[:4])
-                                    try:
-                                        parsed_dt = datetime.strptime(clean_short, '%A %B %d %Y')
-                                        break
-                                    except ValueError: pass
-                                continue
-                        
-                        if parsed_dt:
-                            current_date_str = parsed_dt.strftime('%Y-%m-%d')
-                            continue
-                        
-                    except Exception as e:
-                        logger.debug(f"Row skipped as non-date header: {header_text}")
-                        pass
-                
-                # Use recursive=False to avoid finding nested table cells
-                cells = row.find_all('td', recursive=False)
-            
-            if len(cells) >= 4:
-                # Extract metadata
-                category = row.get('data-category', '')
-                event_id = row.get('data-id', '') # Important for uniqueness
-                
-                # Try to map category to impact
-                calculated_impact = "Low"
-                cat_lower = category.lower()
-                if any(x in cat_lower for x in ['rate', 'inflation', 'gdp', 'payroll', 'unemployment']):
-                    calculated_impact = "High"
-                elif any(x in cat_lower for x in ['balance', 'spending', 'sales', 'confidence', 'pmi']):
-                     calculated_impact = "Medium"
+                    
+                    if parsed_dt:
+                        current_date_str = parsed_dt.strftime('%Y-%m-%d')
+                    continue
 
-                # Extract IDs for frontend event lookup
-                # Construct unique ID: Source-Country-Date-EventName(hash)
-                # Or use the data-id from TE if available
+            # Data rows usually have <td> cells
+            cells = row.css('td')
+            if len(cells) >= 4:
+                # Extract event details
+                # Format: Time, Country, Event, Actual, Previous, Consensus, Forecast
+                time_val = cells[0].css('::text').get(default="").strip()
+                country_val = cells[1].css('::text').get(default="").strip()
+                event_val = cells[2].css('a::text, ::text').get(default="").strip()
                 
-                te_event_id = f"TradingEconomics-{event_id}" if event_id else f"TE-{current_date_str}-{cells[2].get_text(strip=True)}"
+                # Uniqueness
+                event_id = row.attrib.get('data-id', '')
+                te_event_id = f"TradingEconomics-{event_id}" if event_id else f"TE-{current_date_str}-{event_val}"
+
+                # Impact calculation (logic remain same)
+                category = row.attrib.get('data-category', '')
+                calculated_impact = "Low"
+                cat_lower = (category + " " + event_val).lower()
+                if any(x in cat_lower for x in ['rate', 'inflation', 'gdp', 'payroll', 'unemployment', 'fed', 'fomc', 'ecb', 'boe']):
+                    calculated_impact = "High"
+                elif any(x in cat_lower for x in ['balance', 'spending', 'sales', 'confidence', 'pmi', 'manufacturing']):
+                     calculated_impact = "Medium"
 
                 event = CalendarEvent(
                     source="TradingEconomics",
                     date=current_date_str,
-                    time=cells[0].get_text(strip=True),
-                    country=cells[1].get_text(strip=True),
-                    event=cells[2].get_text(strip=True),
-                    actual=cells[3].get_text(strip=True) if len(cells) > 3 else None,
-                    previous=cells[4].get_text(strip=True) if len(cells) > 4 else None,
-                    consensus=cells[5].get_text(strip=True) if len(cells) > 5 else None,
+                    time=time_val,
+                    country=country_val,
+                    event=event_val,
+                    actual=cells[3].css('::text').get(default="").strip(),
+                    previous=cells[4].css('::text').get(default="").strip() if len(cells) > 4 else None,
+                    consensus=cells[5].css('::text').get(default="").strip() if len(cells) > 5 else None,
+                    forecast=cells[6].css('::text').get(default="").strip() if len(cells) > 6 else None,
+                    impact=calculated_impact,
+                    event_id=te_event_id
+                )
+                events.append(event)
+                
+        logger.info(f"TradingEconomics: Found {len(events)} events")
+    except Exception as e:
+        logger.error(f"TradingEconomics error: {e}")
+    
+    return events
                     forecast=cells[6].get_text(strip=True) if len(cells) > 6 else None,
                     category=category,
                     impact=calculated_impact,
@@ -319,38 +321,41 @@ def scrape_trading_economics(date_from: str, date_to: str, country: Optional[str
     return events
 
 def scrape_investing_com(date_from: str, date_to: str, country: Optional[str] = None) -> List[CalendarEvent]:
-    """Scrape Investing.com calendar"""
+    """Scrape Investing.com calendar using Scrapy Selector"""
     events = []
     try:
-        # Convert date format from YYYY-MM-DD to DD/MM/YYYY
-        from_dt = datetime.strptime(date_from, '%Y-%m-%d')
-        to_dt = datetime.strptime(date_to, '%Y-%m-%d')
-        
-        url = f"https://www.investing.com/economic-calendar/"
-        
+        url = "https://www.investing.com/economic-calendar/"
         logger.info(f"Scraping Investing.com: {url}")
         response = fetch_with_retry(url)
         
         if not response:
             return events
         
-        soup = BeautifulSoup(response.text, 'html.parser')
+        sel = Selector(text=response.text)
         
-        # Investing.com uses dynamic loading, try to find the calendar table
-        calendar_rows = soup.find_all('tr', {'class': 'js-event-item'})
+        # Investing.com uses rows with class 'js-event-item' or inside '#economicCalendar_table'
+        rows = sel.css('tr.js-event-item')
         
-        for row in calendar_rows:
+        for row in rows:
             try:
+                # Extract event data using CSS selectors
+                dt_raw = row.attrib.get('data-event-datetime', date_from)
+                event_date = dt_raw.split()[0] if dt_raw else date_from
+                
+                # Impact is often data-event-importance or stars
+                impact_val = row.attrib.get('data-event-importance', 'N/A')
+                
                 event = CalendarEvent(
                     source="Investing.com",
-                    date=row.get('data-event-datetime', date_from).split()[0],
-                    time=row.find('td', {'class': 'time'}).get_text(strip=True) if row.find('td', {'class': 'time'}) else "N/A",
-                    country=row.find('td', {'class': 'flagCur'}).get_text(strip=True) if row.find('td', {'class': 'flagCur'}) else "N/A",
-                    event=row.find('td', {'class': 'event'}).get_text(strip=True) if row.find('td', {'class': 'event'}) else "N/A",
-                    actual=row.find('td', {'id': 'eventActual_'}).get_text(strip=True) if row.find('td', {'id': lambda x: x and 'eventActual' in x}) else None,
-                    forecast=row.find('td', {'id': 'eventForecast_'}).get_text(strip=True) if row.find('td', {'id': lambda x: x and 'eventForecast' in x}) else None,
-                    previous=row.find('td', {'id': 'eventPrevious_'}).get_text(strip=True) if row.find('td', {'id': lambda x: x and 'eventPrevious' in x}) else None,
-                    impact=row.get('data-event-importance', 'N/A'),
+                    date=event_date,
+                    time=row.css('td.time::text').get(default="N/A").strip(),
+                    country=row.css('td.flagCur::text').get(default="N/A").strip(),
+                    event=row.css('td.event a::text, td.event::text').get(default="N/A").strip(),
+                    actual=row.css('td[id^="eventActual_"]::text').get(default="").strip(),
+                    forecast=row.css('td[id^="eventForecast_"]::text').get(default="").strip(),
+                    previous=row.css('td[id^="eventPrevious_"]::text').get(default="").strip(),
+                    impact=impact_val,
+                    event_id=f"Investing-{row.attrib.get('id', 'N/A')}"
                 )
                 events.append(event)
             except Exception as e:
@@ -363,10 +368,9 @@ def scrape_investing_com(date_from: str, date_to: str, country: Optional[str] = 
     return events
 
 def scrape_forexfactory(date_from: str, date_to: str) -> List[CalendarEvent]:
-    """Scrape ForexFactory calendar"""
+    """Scrape ForexFactory calendar using Scrapy Selector"""
     events = []
     try:
-        # ForexFactory uses format: month.day.year
         from_dt = datetime.strptime(date_from, '%Y-%m-%d')
         url = f"https://www.forexfactory.com/calendar?week={from_dt.strftime('%b%d.%Y').lower()}"
         
@@ -376,41 +380,42 @@ def scrape_forexfactory(date_from: str, date_to: str) -> List[CalendarEvent]:
         if not response:
             return events
         
-        soup = BeautifulSoup(response.text, 'html.parser')
-        calendar_rows = soup.find_all('tr', {'class': 'calendar__row'})
+        sel = Selector(text=response.text)
+        rows = sel.css('tr.calendar__row')
         
-        current_date = None
-        for row in calendar_rows:
+        current_date_str = date_from
+        for row in rows:
             try:
-                # Check for date
-                date_cell = row.find('td', {'class': 'calendar__cell calendar__date'})
-                if date_cell:
-                    date_span = date_cell.find('span')
-                    if date_span:
-                        current_date = date_span.get_text(strip=True)
+                # Update current date if present
+                date_val = row.css('td.calendar__date span::text').get()
+                if date_val:
+                    # FF dates are like "Oct 23" - we may need to handle year
+                    current_date_str = date_val.strip()
                 
-                time_cell = row.find('td', {'class': 'calendar__cell calendar__time'})
-                currency_cell = row.find('td', {'class': 'calendar__cell calendar__currency'})
-                impact_cell = row.find('td', {'class': 'calendar__cell calendar__impact'})
-                event_cell = row.find('td', {'class': 'calendar__cell calendar__event'})
-                actual_cell = row.find('td', {'class': 'calendar__cell calendar__actual'})
-                forecast_cell = row.find('td', {'class': 'calendar__cell calendar__forecast'})
-                previous_cell = row.find('td', {'class': 'calendar__cell calendar__previous'})
+                event_title = row.css('td.calendar__event span::text, td.calendar__event::text').get()
+                if not event_title:
+                    continue
                 
-                if event_cell:
-                    event = CalendarEvent(
-                        source="ForexFactory",
-                        date=current_date or date_from,
-                        time=time_cell.get_text(strip=True) if time_cell else "N/A",
-                        country=currency_cell.get_text(strip=True) if currency_cell else "N/A",
-                        currency=currency_cell.get_text(strip=True) if currency_cell else None,
-                        event=event_cell.get_text(strip=True),
-                        impact=impact_cell.get('class', [''])[1] if impact_cell else None,
-                        actual=actual_cell.get_text(strip=True) if actual_cell else None,
-                        forecast=forecast_cell.get_text(strip=True) if forecast_cell else None,
-                        previous=previous_cell.get_text(strip=True) if previous_cell else None,
-                    )
-                    events.append(event)
+                # Impact is often a class on the impact cell: calendar__impact-icon--high etc.
+                impact_class = row.css('td.calendar__impact span::attr(class)').get(default="")
+                impact = "Low"
+                if "high" in impact_class.lower(): impact = "High"
+                elif "medium" in impact_class.lower(): impact = "Medium"
+
+                event = CalendarEvent(
+                    source="ForexFactory",
+                    date=current_date_str,
+                    time=row.css('td.calendar__time::text').get(default="N/A").strip(),
+                    country=row.css('td.calendar__currency::text').get(default="N/A").strip(),
+                    currency=row.css('td.calendar__currency::text').get(default="N/A").strip(),
+                    event=event_title.strip(),
+                    impact=impact,
+                    actual=row.css('td.calendar__actual::text').get(default="").strip(),
+                    forecast=row.css('td.calendar__forecast::text').get(default="").strip(),
+                    previous=row.css('td.calendar__previous::text').get(default="").strip(),
+                    event_id=f"FF-{current_date_str}-{event_title.strip()}"
+                )
+                events.append(event)
             except Exception as e:
                 continue
         
@@ -421,32 +426,33 @@ def scrape_forexfactory(date_from: str, date_to: str) -> List[CalendarEvent]:
     return events
 
 def scrape_fxstreet(date_from: str, date_to: str) -> List[CalendarEvent]:
-    """Scrape FXStreet calendar"""
+    """Scrape FXStreet calendar using Scrapy Selector"""
     events = []
     try:
         url = "https://www.fxstreet.com/economic-calendar"
-        
         logger.info(f"Scraping FXStreet: {url}")
         response = fetch_with_retry(url)
         
         if not response:
             return events
         
-        soup = BeautifulSoup(response.text, 'html.parser')
-        event_rows = soup.find_all('div', {'class': 'fxs_c_economicCalendar_item'})
+        sel = Selector(text=response.text)
+        # FXStreet items are often 'div.fxs_c_economicCalendar_item'
+        rows = sel.css('div.fxs_c_economicCalendar_item')
         
-        for row in event_rows:
+        for row in rows:
             try:
                 event = CalendarEvent(
                     source="FXStreet",
                     date=date_from,
-                    time=row.find('span', {'class': 'fxs_c_economicCalendar_dateTime_time'}).get_text(strip=True) if row.find('span', {'class': 'fxs_c_economicCalendar_dateTime_time'}) else "N/A",
-                    country=row.find('span', {'class': 'fxs_c_economicCalendar_country'}).get_text(strip=True) if row.find('span', {'class': 'fxs_c_economicCalendar_country'}) else "N/A",
-                    event=row.find('span', {'class': 'fxs_c_economicCalendar_event_title'}).get_text(strip=True) if row.find('span', {'class': 'fxs_c_economicCalendar_event_title'}) else "N/A",
-                    impact=row.find('span', {'class': 'fxs_c_economicCalendar_volatility'}).get('class', [])[-1] if row.find('span', {'class': 'fxs_c_economicCalendar_volatility'}) else None,
-                    actual=row.find('span', {'class': 'fxs_c_economicCalendar_actual'}).get_text(strip=True) if row.find('span', {'class': 'fxs_c_economicCalendar_actual'}) else None,
-                    forecast=row.find('span', {'class': 'fxs_c_economicCalendar_consensus'}).get_text(strip=True) if row.find('span', {'class': 'fxs_c_economicCalendar_consensus'}) else None,
-                    previous=row.find('span', {'class': 'fxs_c_economicCalendar_previous'}).get_text(strip=True) if row.find('span', {'class': 'fxs_c_economicCalendar_previous'}) else None,
+                    time=row.css('span.fxs_c_economicCalendar_dateTime_time::text').get(default="N/A").strip(),
+                    country=row.css('span.fxs_c_economicCalendar_country::text').get(default="N/A").strip(),
+                    event=row.css('span.fxs_c_economicCalendar_event_title::text').get(default="N/A").strip(),
+                    impact=row.css('span.fxs_c_economicCalendar_volatility::attr(class)').get(default="").split()[-1],
+                    actual=row.css('span.fxs_c_economicCalendar_actual::text').get(default="").strip(),
+                    forecast=row.css('span.fxs_c_economicCalendar_consensus::text').get(default="").strip(),
+                    previous=row.css('span.fxs_c_economicCalendar_previous::text').get(default="").strip(),
+                    event_id=f"FXStreet-{row.css('span.fxs_c_economicCalendar_event_title::text').get(default='N/A').strip()}"
                 )
                 events.append(event)
             except Exception as e:
@@ -842,12 +848,18 @@ async def proxy_status():
         if not manager:
             return {"status": "error", "error": "Manager not initialized"}
             
-        proxy = manager.get()
+        proxy_str = ""
+        if hasattr(manager, 'get'):
+            proxy_str = manager.get().as_string()
+        elif hasattr(manager, 'proxy'):
+            proxy_str = manager.proxy
+        
         return {
             "status": "healthy",
             "provider": "SwiftShadow",
-            "current_proxy": proxy.as_string(),
-            "auto_rotate": True
+            "current_proxy": proxy_str,
+            "auto_rotate": True,
+            "version": "1.x" if hasattr(manager, 'proxy') and not hasattr(manager, 'get') else "2.x"
         }
     except Exception as e:
         return {
